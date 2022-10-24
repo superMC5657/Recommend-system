@@ -1,17 +1,20 @@
-#!/user/bin/env python
-# -*- coding:utf-8 -*-
-'''
-@Author :   zzn
-@Data   :   2020-04-07
-@For    :   SVD 算法，使用numpy里面的SVD实现
-'''
+# -*- coding: utf-8 -*-
+# !@time: 2022/10/23 16:12
+# !@author: superMC @email: 18758266469@163.com
+# !@fileName: svd.py
+
+import math
+import random
+
 import numpy as np
 from numpy import linalg as la
+
+from base import Base
 
 
 def ecludSim(inA, inB):
     '''欧式距离'''
-    return 1.0 / (1.0 + la.norm(inA - inB))   # 这里的1/(1+距离)表示将相似度的范围放在0与1之间
+    return 1.0 / (1.0 + la.norm(inA - inB))  # 这里的1/(1+距离)表示将相似度的范围放在0与1之间
 
 
 def pearsSim(inA, inB):
@@ -32,24 +35,15 @@ def cosSim(inA, inB):
         return 0.5
 
 
-class SVD(object):
+class SVD(Base):
 
     def __init__(self, simMeas=cosSim):
+        super(SVD, self).__init__()
         ''' 相似度衡量的方法默认用余弦相似度 '''
         self.simMeas = simMeas
+        self.movie_list = set()
 
-    @staticmethod
-    def loadfile(filepath):
-        ''' return a generator by "yield" ,which help to save RAM. '''
-        with open(filepath, 'r') as fp:
-            for i, line in enumerate(fp):
-                yield line.strip()
-                # if i % 100000 == 0:
-                #     break
-                #     print('loading %s(%s)' % (filepath, i))
-        print('Load successed!')
-
-    def bd_mat(self, filepath, p):
+    def data_process(self, filepath, p):
         ''' 加载和划分数据集，格式xx_data_mat[u, i] 表示用户u对产品i的打分，如果没有打分则记为0.（注意区别array的data[u][i]）
 
          @:param p : 划分比例，一般是8：2
@@ -61,24 +55,32 @@ class SVD(object):
         self.test_data_mat = np.zeros(shape=(n_user, n_item))
         len_trainset = 0
         len_testset = 0
+        real_user_num = 0
 
         for line in self.loadfile(filepath):
             user, movie, rating, _time = line.split('::')
             user = int(user)
             movie = int(movie)
+            self.movie_list.add(movie)
+            real_user_num = max(real_user_num, user)
             if np.random.random() < p:
                 self.train_data_mat[user][movie] = rating
+                self.trainset.setdefault(user, {})
+                self.trainset[user][movie] = int(rating)
                 len_trainset += 1
             else:
                 self.test_data_mat[user][movie] = rating
+                self.testset.setdefault(user, {})
+                self.testset[user][movie] = int(rating)
                 len_testset += 1
         # print(self.train_data_mat)
         # print(self.test_data_mat)
-        self.train_data_mat = np.mat(self.train_data_mat)
-        self.test_data_mat = np.mat(self.test_data_mat)
+        self.train_data_mat = np.mat(self.train_data_mat[:real_user_num + 1])
+        self.test_data_mat = np.mat(self.test_data_mat[:real_user_num + 1])
         # print(type(self.train_data_mat))
         print('train set len =', len_trainset)
         print('test set len =', len_testset)
+        print('user num:', real_user_num)
         # print(np.nonzero(self.test_data_mat))
 
     @staticmethod
@@ -106,10 +108,10 @@ class SVD(object):
         k = self.sigmaPct(sigma, percentage)  # 确定k的值
         sigmaK = np.mat(np.eye(k) * sigma[:k])  # 构建对角矩阵
         self.xformedItems = self.train_data_mat.T * \
-            u[:, :k] * sigmaK.I  # 根据k的值将原始数据转换到k维空间(低维)
+                            u[:, :k] * sigmaK.I  # 根据k的值将原始数据转换到k维空间(低维)
         print('k-mat build succ!')
 
-    def calu(self, user, item):
+    def prediction(self, user, item):
         ''' 预测user对item的打分值
 
         对于用户user，根据其它电影j 的打分情况，通过self.simMeas相似度计算方法，在K 维空间上，计算item与j 的相似度。
@@ -119,9 +121,9 @@ class SVD(object):
         simTotal = 0.0
         ratSimTotal = 0.0
         for j in range(n):
-            userRating = self.train_data_mat[user, j]   # 对所有电影，获取用户u 对电影j 的评分
+            userRating = self.train_data_mat[user, j]  # 对所有电影，获取用户u 对电影j 的评分
             if userRating == 0 or j == item:
-                continue   # 只选择曾有评分的
+                continue  # 只选择曾有评分的
             similarity = self.simMeas(
                 self.xformedItems[item, :].T, self.xformedItems[j, :].T)  # 计算item 与j 之间的相似度
             simTotal += similarity
@@ -131,16 +133,17 @@ class SVD(object):
         else:
             return ratSimTotal / simTotal  # 得到对物品item的预测评分
 
-    def evalute(self):
+    def evalute_prediction(self):
         ''' 评估预测效果，评价指标使用MSE. '''
         MSE = 0.0
+        MAE = 0.0
         # 找到非0 元素，即找到待预测的item 的坐标。
         row, column = np.nonzero(self.test_data_mat)
         # print(row,column,type(row))
         for i in range(len(row)):
-            user = row[i]   # 取得相应id 值
+            user = row[i]  # 取得相应id 值
             item = column[i]
-            r_hat = self.calu(user, item)
+            r_hat = self.prediction(user, item)
             temp = r_hat - self.test_data_mat[user, item]
             if i % 10000 == 0:
                 print(
@@ -148,11 +151,14 @@ class SVD(object):
                     (i, user, item, r_hat, temp))
             # print(MSE)
             MSE += temp ** 2
+            MAE += abs(temp)
         MSE /= len(row)
-        print('MSE =', MSE)
+        MAE /= len(row)
+        RMSE = math.sqrt(MSE)
+        return MAE, RMSE
 
-    def recommend(self, user, N=5):
-        ''' 产生预测评分最高的N 个推荐结果，默认返回5个
+    def recommend(self, user):
+        ''' 产生预测评分最高的N 个推荐结果，默认返回N个
 
          :return 返回前N 个评分值的item，及其预测评分值. 格式[(item1,score1), (item2,score2), ...]
          '''
@@ -162,19 +168,20 @@ class SVD(object):
             return 'you rated everything'  # 如果都已经评过分，则退出
         itemScores = []
         for item in unratedItems:  # 对于每个未评分的item，都计算其预测评分
-            r_hat = self.calu(user, item)
-            itemScores.append((item, r_hat))
+            if item in self.movie_list:
+                r_hat = self.prediction(user, item)
+                itemScores.append((item, r_hat))
         itemScores = sorted(
             itemScores,
             key=lambda x: x[1],
             reverse=True)  # 按照item的得分进行从大到小排序
-        return itemScores[:N]
+        return itemScores[:self.n_rec_movie]
 
 
 def main():
     print('*' * 20, 'Recommendation algorithm based on SVD', '*' * 20)
     svd = SVD(simMeas=cosSim)
-    svd.bd_mat('./Data_raw/ml-1m/ratings.dat', p=0.8)
+    svd.data_process('./Data_raw/ml-1m/ratings.dat', p=0.8)
     svd.bd_kmat(percentage=0.8)
     svd.evalute()
     # svd.recommend(user=1) # 测试预测

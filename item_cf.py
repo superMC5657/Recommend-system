@@ -1,64 +1,25 @@
-#!/user/bin/env python
-# -*- coding:utf-8 -*-
-'''
-@Author :   zzn
-@Data   :   2020-04-06
-'''
+# -*- coding: utf-8 -*-
+# !@time: 2022/10/23 16:12
+# !@author: superMC @email: 18758266469@163.com
+# !@fileName: item_cf.py
+
+
 import time
 import math
 import random
 from collections import defaultdict
 from operator import itemgetter
 
+from base import Base
 
-class ItemBasedCF(object):
+
+class ItemBasedCF(Base):
     def __init__(self):
-        self.trainset = {}
-        self.testset = {}
-        self.n_sim_movie = 20
-        self.n_rec_movie = 10
+        super(ItemBasedCF, self).__init__()
         self.movie_simmat = {}
         self.movie_popular = {}
         self.movie_count = 0.0
-
-    @staticmethod
-    def loadfile(filepath):
-        ''' return a generator by "yield" ,which help to save RAM. '''
-        with open(filepath, 'r') as fp:
-            for i, line in enumerate(fp):
-                yield line.strip()
-                # if i % 1000000 == 0:
-                #     print('loading %s(%s)' % (filepath, i))
-        print('Load successed!')
-
-    def data_process(self, filepath, p):
-        '''
-        :param filepath: rating data path
-        :return: split dataset to train set and test set
-
-        Dataset format:
-        {user1:{movie1:v1, movie2:v2, ..., movieN:vN}
-         user2:{...}
-         ...
-        }
-        '''
-        len_trainset = 0
-        len_testset = 0
-        for line in self.loadfile(filepath):
-            user, movie, rating, _time = line.split('::')
-            if random.random() < p:
-                self.trainset.setdefault(user, {})
-                # eg: 1196 {'1258': 3, '1': 4}
-                self.trainset[user][movie] = int(rating)
-                len_trainset += 1
-            else:
-                self.testset.setdefault(user, {})
-                self.testset[user][movie] = int(rating)
-                len_testset += 1
-        print('train set len =', len_trainset)
-        print('test set len =', len_testset)
-        print('Trainset user count =', len(self.trainset))
-        print('Testset user count =', len(self.testset))
+        self.max_length = 10000
 
     def calculate_movie_sim(self):
         count = 0
@@ -81,7 +42,7 @@ class ItemBasedCF(object):
         for m1, related_movies in self.movie_simmat.items():
             for m2, count in related_movies.items():
                 self.movie_simmat[m1][m2] = count / \
-                    math.sqrt(self.movie_popular[m1] * self.movie_popular[m2])
+                                            math.sqrt(self.movie_popular[m1] * self.movie_popular[m2])
                 cal_sim_count += 1
                 if cal_sim_count % 2000000 == 0:
                     print(
@@ -116,42 +77,17 @@ class ItemBasedCF(object):
                     continue
                 rank[other_movie] = rank.get(other_movie, 0) + similarity * rating
         len_ = len(watched_movies)
-        if len_ !=0 :
+        if len_ != 0:
             for m, rating in rank.items():
                 # print(m,rating,type(m),type(rating),len_)
-                rank[m] = 5 * rating / len_     # 乘以5 是因为评分是0-5的，不然算出来是个0-1 左右的值
+                rank[m] = 5 * rating / len_  # 乘以5 是因为评分是0-5的，不然算出来是个0-1 左右的值
         return rank
 
-    def evalute_recommend(self):
-        ''' Test recommend by precision, recall, coverage, popularity. '''
-        N = self.n_rec_movie
-        hit = 0
-        rec_count = 0.0
-        test_count = 0.0
-        all_rec_movies = set()
-        popular_sum = 0
-        for i, user in enumerate(self.trainset):
-            if i % 500 == 0:
-                print('Recommended for %d users' % i)
-            test_movies = self.testset.get(user, {})
-            rec_movies = self.recommend(user)
-            for movie, _ in rec_movies:
-                if movie in test_movies:
-                    hit += 1
-                all_rec_movies.add(movie)
-                popular_sum += math.log(1 + self.movie_popular[movie])
-            rec_count += N
-            test_count += len(test_movies)
-        precision = hit / rec_count
-        recall = hit / test_count
-        coverage = len(all_rec_movies) / (1.0 * self.movie_count)
-        popularity = popular_sum / (1.0 * rec_count)
-        print('precision=%.4f\trecall=%.4f\tcoverage=%.4f\tpopularity=%.4f' %
-              (precision, recall, coverage, popularity))
 
     def evalute_prediction(self):
         ''' Test prediction by MSE. '''
         MSE = 0.0
+        MAE = 0.0
         eval_count = 0
         for i, user in enumerate(self.testset):
             if i % 500 == 0:
@@ -161,27 +97,33 @@ class ItemBasedCF(object):
             for m, real_score in test_movie_score.items():
                 temp = rec_movie_score.get(m, 0) - real_score
                 eval_count += 1
-                MSE += temp**2
+                MSE += temp ** 2
+                MAE += abs(temp)
                 if eval_count % 1000 == 0:
-                    print('eval_count(%d) user:%s to movie %s, real_score:%f, predict_score:%f, error:%f'%(eval_count,user,m,real_score,rec_movie_score.get(m,0),temp))
+                    print('eval_count(%d) user:%s to movie %s, real_score:%f, predict_score:%f, error:%f' % (
+                        eval_count, user, m, real_score, rec_movie_score.get(m, 0), temp))
         MSE /= eval_count
-        print('MSE = %.4f' % MSE)
+        MAE /= eval_count
+        RMSE = math.sqrt(MSE)
+        return MAE, RMSE
 
 
 def main():
-    print('*'*20,'Item-based collaborative filtering algorithm','*'*20)
+    print('*' * 20, 'Item-based collaborative filtering algorithm', '*' * 20)
     itemcf = ItemBasedCF()
     itemcf.data_process('./Data_raw/ml-1m/ratings.dat', p=0.8)
-    time_s = time.time()
+    # time_s = time.time()
     itemcf.calculate_movie_sim()
-    time_m = time.time()
+    # time_m = time.time()
     # itemcf.evalute_recommend()
-    time_er = time.time()
-    itemcf.evalute_prediction()
-    time_ep = time.time()
-    print('Time spent calculating is:',time_m - time_s)
-    # print('Time spent on recommendations:',time_er - time_m)
-    print('Time spend predicting is:',time_ep - time_er)
+    # time_er = time.time()
+    # itemcf.evalute_prediction()
+    # time_ep = time.time()
+    # print('Time spent calculating is:', time_m - time_s)
+    # # print('Time spent on recommendations:',time_er - time_m)
+    # print('Time spend predicting is:', time_ep - time_er)
+    itemcf.evalute()
+
 
 if __name__ == '__main__':
     main()
